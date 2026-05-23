@@ -172,8 +172,19 @@ async function finishBattle(telegram, state, lang, settings) {
 
   const names = players.map((p) => ({
     user_id: p.user_id,
-    name: p.username ? `@${p.username}` : p.first_name || `user_${p.user_id}`,
+    // 通常演出ではメンションを避ける（通知スパム防止）
+    name: p.first_name || p.username || `user_${p.user_id}`,
+    mention: `<a href="tg://user?id=${p.user_id}">${(p.first_name || p.username || `user_${p.user_id}`).replace(
+      /</g,
+      "&lt;"
+    ).replace(/>/g, "&gt;")}</a>`,
   }));
+
+  const participantList = names.map((n, i) => `${i + 1}. ${n.name}`).join("\n");
+  await telegram.sendMessage(
+    state.chatId,
+    `👥 Participants (${names.length})\n${participantList}\n\n🎬 Battle Start!`
+  );
 
   const defaultEffects = getEffects(lang);
   let effects = defaultEffects;
@@ -197,7 +208,9 @@ async function finishBattle(telegram, state, lang, settings) {
 
   const winner = alive[0];
   const winnerTemplate = settings.winner_message_template || t(lang, "winner", { user: "{user}" });
-  await telegram.sendMessage(state.chatId, winnerTemplate.replaceAll("{user}", winner.name));
+  await telegram.sendMessage(state.chatId, winnerTemplate.replaceAll("{user}", winner.mention), {
+    parse_mode: "HTML",
+  });
   closeBattleStmt.run(nowISO(), winner.user_id, winner.name, state.battleId);
 }
 
