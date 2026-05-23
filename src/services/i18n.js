@@ -36,7 +36,11 @@ function t(lang, key, vars = {}) {
 }
 
 function getEffects(lang) {
-  return ["effect_1", "effect_2", "effect_3", "effect_4"].map((k) => bundles[lang][k] || bundles.en[k]);
+  const selected = bundles[lang] || bundles.en;
+  const keys = Object.keys(selected)
+    .filter((k) => /^effect_\d+$/.test(k))
+    .sort((a, b) => Number(a.split("_")[1]) - Number(b.split("_")[1]));
+  return keys.map((k) => selected[k] || bundles.en[k]).filter(Boolean);
 }
 
 module.exports = { detectLang, t, getEffects, supported };
