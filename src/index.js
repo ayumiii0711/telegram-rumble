@@ -328,24 +328,71 @@ bot.action(/battle_join:(.+)/, async (ctx) => {
 });
 
 bot.command("license", async (ctx) => {
-  if (!["group", "supergroup"].includes(ctx.chat?.type)) return ctx.reply("Use in group only.");
+  const args = ctx.message.text.split(" ").slice(1);
+  const isGroup = ["group", "supergroup"].includes(ctx.chat?.type);
 
+  if (isGroup) {
+    const { group, settings } = ensureGroup(ctx);
+    const lang = getLang(ctx, group, settings);
+    if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
+    if (args.length !== 1) return ctx.reply(t(lang, "license_usage"));
+
+    const code = args[0].trim().toUpperCase();
+    const lic = getLicenseStmt.get(code);
+    if (!lic || lic.is_used) return ctx.reply(t(lang, "license_ng"));
+
+    const result = activateLicenseStmt.run(String(ctx.chat.id), String(ctx.from.id), nowISO(), code);
+    if (result.changes !== 1) return ctx.reply(t(lang, "license_ng"));
+
+    setPremiumStmt.run(nowISO(), String(ctx.chat.id));
+    return ctx.reply(t(lang, "license_ok"));
+  }
+
+  // Private chat flow:
+  // /license XXXXX-XXXXX -1001234567890
+  if (ctx.chat?.type === "private") {
+    if (args.length !== 2) {
+      return ctx.reply(
+        "Usage in DM:\n/license XXXXX-XXXXX -1001234567890\n\nTip: run /groupid in your target group first."
+      );
+    }
+
+    const code = args[0].trim().toUpperCase();
+    const targetChatId = args[1].trim();
+    const lic = getLicenseStmt.get(code);
+    if (!lic || lic.is_used) return ctx.reply("Invalid License");
+
+    try {
+      const member = await ctx.telegram.getChatMember(targetChatId, ctx.from.id);
+      if (!["creator", "administrator"].includes(member.status)) {
+        return ctx.reply("You must be an admin of that target group.");
+      }
+    } catch (_) {
+      return ctx.reply(
+        "Cannot access that group. Make sure:\n1) Bot is in the group\n2) group id is correct\n3) you are an admin"
+      );
+    }
+
+    db.transaction(() => {
+      upsertGroupStmt.run({ chat_id: targetChatId, title: "", now: nowISO() });
+      upsertDefaultSettingsStmt.run(targetChatId);
+      const result = activateLicenseStmt.run(targetChatId, String(ctx.from.id), nowISO(), code);
+      if (result.changes !== 1) throw new Error("activate_failed");
+      setPremiumStmt.run(nowISO(), targetChatId);
+    })();
+
+    return ctx.reply(`Premium Activated for group: ${targetChatId}`);
+  }
+});
+
+bot.command("groupid", async (ctx) => {
+  if (!["group", "supergroup"].includes(ctx.chat?.type)) {
+    return ctx.reply("Use this command in a group.");
+  }
   const { group, settings } = ensureGroup(ctx);
   const lang = getLang(ctx, group, settings);
   if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
-
-  const args = ctx.message.text.split(" ").slice(1);
-  if (args.length !== 1) return ctx.reply(t(lang, "license_usage"));
-
-  const code = args[0].trim().toUpperCase();
-  const lic = getLicenseStmt.get(code);
-  if (!lic || lic.is_used) return ctx.reply(t(lang, "license_ng"));
-
-  const result = activateLicenseStmt.run(String(ctx.chat.id), String(ctx.from.id), nowISO(), code);
-  if (result.changes !== 1) return ctx.reply(t(lang, "license_ng"));
-
-  setPremiumStmt.run(nowISO(), String(ctx.chat.id));
-  await ctx.reply(t(lang, "license_ok"));
+  return ctx.reply(`Group ID: ${ctx.chat.id}`);
 });
 
 bot.command("settings", async (ctx) => {
