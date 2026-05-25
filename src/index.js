@@ -124,18 +124,19 @@ function ensureGroup(ctx) {
   };
 }
 
-function activatePremiumForChat(chatId, userId) {
+function activatePremiumForChat(chatId, userId, buyerDmId) {
   const now = nowISO();
   db.transaction(() => {
     upsertGroupStmt.run({ chat_id: String(chatId), title: "", now });
     upsertDefaultSettingsStmt.run(String(chatId));
     setPremiumStmt.run(now, String(chatId));
   })();
-  if (userId) {
+  // Privacy-first: do not post payment confirmation in group.
+  if (buyerDmId) {
     bot.telegram
       .sendMessage(
-        String(chatId),
-        `✅ Premium auto-activated from Stripe payment.\nActivated by user: ${userId}`
+        String(buyerDmId),
+        `✅ Payment confirmed.\nPremium was activated for group: ${chatId}\n\nYou can now use premium commands in that group: /schedule, /setbutton, /setwinner, /seteffect, /setgif`
       )
       .catch(() => {});
   }
@@ -167,7 +168,8 @@ function startWebhookServer() {
         const session = event.data.object;
         const targetChatId = session.metadata?.chat_id;
         const buyerUserId = session.metadata?.user_id || "unknown";
-        if (targetChatId) activatePremiumForChat(targetChatId, buyerUserId);
+        const buyerDmId = session.metadata?.buyer_dm_id || null;
+        if (targetChatId) activatePremiumForChat(targetChatId, buyerUserId, buyerDmId);
       }
       addEventStmt.run(event.id, event.type, nowISO());
       return res.status(200).send("ok");
@@ -383,15 +385,41 @@ bot.command("premium", async (ctx) => {
 });
 
 bot.command("buy", async (ctx) => {
-  if (!["group", "supergroup"].includes(ctx.chat?.type)) return ctx.reply("Use in group only.");
-  if (!(await isAdmin(ctx))) return ctx.reply("Admins only.");
   if (!stripe || !STRIPE_PRICE_ID) {
     return ctx.reply("Auto-payment is not configured yet. Please set STRIPE_SECRET_KEY and STRIPE_PRICE_ID.");
   }
 
-  const chatId = String(ctx.chat.id);
   const userId = String(ctx.from.id);
-  ensureGroup(ctx);
+  const args = ctx.message.text.split(" ").slice(1);
+  let chatId;
+
+  if (["group", "supergroup"].includes(ctx.chat?.type)) {
+    if (!(await isAdmin(ctx))) return ctx.reply("Admins only.");
+    chatId = String(ctx.chat.id);
+    ensureGroup(ctx);
+  } else if (ctx.chat?.type === "private") {
+    if (args.length !== 1) {
+      return ctx.reply(
+        "Usage in DM:\n/buy -1001234567890\n\nTip: run /groupid in your target group first."
+      );
+    }
+    chatId = args[0].trim();
+    try {
+      const member = await ctx.telegram.getChatMember(chatId, ctx.from.id);
+      if (!["creator", "administrator"].includes(member.status)) {
+        return ctx.reply("You must be an admin of that target group.");
+      }
+    } catch (_) {
+      return ctx.reply(
+        "Cannot access that group. Make sure:\n1) Bot is in the group\n2) group id is correct\n3) you are an admin"
+      );
+    }
+    const now = nowISO();
+    upsertGroupStmt.run({ chat_id: chatId, title: "", now });
+    upsertDefaultSettingsStmt.run(chatId);
+  } else {
+    return ctx.reply("Use in group or private chat.");
+  }
 
   try {
     const session = await stripe.checkout.sessions.create({
@@ -402,9 +430,10 @@ bot.command("buy", async (ctx) => {
       metadata: {
         chat_id: chatId,
         user_id: userId,
+        buyer_dm_id: String(ctx.from.id),
       },
     });
-    await ctx.reply(`💳 Pay here to auto-activate Premium:\n${session.url}`);
+    await ctx.reply(`💳 Pay here to auto-activate Premium:\n${session.url}\n\nTarget group: ${chatId}`);
   } catch (err) {
     console.error("Failed to create checkout session:", err);
     await ctx.reply("Failed to create payment session. Please try again later.");
@@ -504,6 +533,33 @@ bot.command("groupid", async (ctx) => {
   const lang = getLang(ctx, group, settings);
   if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
   return ctx.reply(`Group ID: ${ctx.chat.id}`);
+});
+
+function dmGuideText() {
+  return [
+    "📘 Premium Setup Guide (DM)",
+    "",
+    "1) In your target group, run: /groupid",
+    "2) Copy the group id (example: -1001234567890)",
+    "3) In this DM, run: /buy -1001234567890",
+    "4) Complete Stripe payment from the generated link",
+    "5) You'll receive DM confirmation when Premium is activated",
+    "",
+    "Notes:",
+    "- You must be an admin of the target group",
+    "- Bot must be in the target group",
+    "- 1 payment = 1 group premium activation",
+  ].join("\n");
+}
+
+bot.command("helpdm", async (ctx) => {
+  if (ctx.chat?.type !== "private") return ctx.reply("Use this command in DM.");
+  return ctx.reply(dmGuideText());
+});
+
+bot.start(async (ctx) => {
+  if (ctx.chat?.type !== "private") return;
+  return ctx.reply(dmGuideText());
 });
 
 bot.command("settings", async (ctx) => {
