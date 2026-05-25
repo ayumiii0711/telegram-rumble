@@ -22,6 +22,7 @@ const STRIPE_SUCCESS_URL = process.env.STRIPE_SUCCESS_URL || "https://t.me";
 const STRIPE_CANCEL_URL = process.env.STRIPE_CANCEL_URL || "https://t.me";
 const PORT = Number(process.env.PORT || 3000);
 const DATABASE_URL = process.env.DATABASE_URL || "";
+const BOT_OWNER_ID = String(process.env.BOT_OWNER_ID || "");
 const LICENSE_SECRET = process.env.LICENSE_SECRET || "CHANGE_ME";
 const LICENSE_SEEDS = (process.env.PREMIUM_LICENSE_SEEDS || "")
   .split(",")
@@ -121,6 +122,10 @@ async function isAdmin(ctx) {
   const userId = ctx.from.id;
   const admins = await ctx.telegram.getChatAdministrators(chatId);
   return admins.some((a) => a.user.id === userId);
+}
+
+function isOwner(ctx) {
+  return BOT_OWNER_ID && String(ctx.from?.id) === BOT_OWNER_ID;
 }
 
 function ensureGroup(ctx) {
@@ -590,6 +595,33 @@ bot.command("groupid", async (ctx) => {
   return ctx.reply(`Group ID: ${ctx.chat.id}`);
 });
 
+// Owner-only emergency recovery:
+// Group: /premiumon
+// DM: /premiumon -1001234567890
+bot.command("premiumon", async (ctx) => {
+  if (!BOT_OWNER_ID) return ctx.reply("BOT_OWNER_ID is not configured.");
+  if (!isOwner(ctx)) return ctx.reply("Owner only.");
+
+  let targetChatId = null;
+  if (["group", "supergroup"].includes(ctx.chat?.type)) {
+    targetChatId = String(ctx.chat.id);
+  } else if (ctx.chat?.type === "private") {
+    const arg = ctx.message.text.split(" ").slice(1)[0];
+    if (!arg) return ctx.reply("Usage: /premiumon -1001234567890");
+    targetChatId = arg.trim();
+  } else {
+    return ctx.reply("Unsupported chat type.");
+  }
+
+  const now = nowISO();
+  upsertGroupStmt.run({ chat_id: targetChatId, title: "", now });
+  upsertDefaultSettingsStmt.run(targetChatId);
+  setPremiumStmt.run(now, targetChatId);
+  await markPremiumPersistent(targetChatId);
+
+  return ctx.reply(`✅ Premium forced ON for group: ${targetChatId}`);
+});
+
 function dmGuideText(lang) {
   if (lang === "ja") {
     return [
@@ -759,6 +791,7 @@ async function registerTelegramCommands() {
     { command: "buy", description: "Buy premium for group id" },
     { command: "premium", description: "Show premium info and link" },
     { command: "license", description: "Activate premium license" },
+    { command: "premiumon", description: "Owner: force premium ON" },
   ];
 
   try {
