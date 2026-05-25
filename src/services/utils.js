@@ -1,4 +1,11 @@
 const dayjs = require("dayjs");
+const DEFAULT_TZ = process.env.DEFAULT_TIMEZONE || "Asia/Tokyo";
+
+function tzOffset(tz) {
+  if (tz === "Asia/Tokyo" || tz === "JST") return "+09:00";
+  if (tz === "UTC") return "+00:00";
+  return "+09:00";
+}
 
 function nowISO() {
   return new Date().toISOString();
@@ -32,7 +39,10 @@ function parseScheduleArgs(rawArgs) {
   }
 
   if ((rawArgs[0] || "").toLowerCase() === "once" && rawArgs.length === 3) {
-    const dt = dayjs(`${rawArgs[1]} ${rawArgs[2]}`);
+    const hhmm = parseTimeHHMM(rawArgs[2]);
+    if (!hhmm) return null;
+    const iso = `${rawArgs[1]}T${hhmm}:00${tzOffset(DEFAULT_TZ)}`;
+    const dt = dayjs(iso);
     if (!dt.isValid()) return null;
     return { type: "once", time_hhmm: null, weekday: null, run_at: dt.toISOString() };
   }

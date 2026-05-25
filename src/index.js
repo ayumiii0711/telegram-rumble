@@ -23,6 +23,7 @@ const STRIPE_CANCEL_URL = process.env.STRIPE_CANCEL_URL || "https://t.me";
 const PORT = Number(process.env.PORT || 3000);
 const DATABASE_URL = process.env.DATABASE_URL || "";
 const BOT_OWNER_ID = String(process.env.BOT_OWNER_ID || "");
+const DEFAULT_TIMEZONE = process.env.DEFAULT_TIMEZONE || "Asia/Tokyo";
 const LICENSE_SECRET = process.env.LICENSE_SECRET || "CHANGE_ME";
 const LICENSE_SEEDS = (process.env.PREMIUM_LICENSE_SEEDS || "")
   .split(",")
@@ -359,7 +360,7 @@ function registerSchedule(schedule) {
   if (schedule.type === "daily") {
     const [hh, mm] = schedule.time_hhmm.split(":").map(Number);
     const expr = `${mm} ${hh} * * *`;
-    const task = cron.schedule(expr, () => autoBattle(chatId));
+    const task = cron.schedule(expr, () => autoBattle(chatId), { timezone: DEFAULT_TIMEZONE });
     scheduleRunners.set(chatId, { kind: "cron", task });
     return;
   }
@@ -367,7 +368,7 @@ function registerSchedule(schedule) {
   if (schedule.type === "weekly") {
     const [hh, mm] = schedule.time_hhmm.split(":").map(Number);
     const expr = `${mm} ${hh} * * ${schedule.weekday}`;
-    const task = cron.schedule(expr, () => autoBattle(chatId));
+    const task = cron.schedule(expr, () => autoBattle(chatId), { timezone: DEFAULT_TIMEZONE });
     scheduleRunners.set(chatId, { kind: "cron", task });
     return;
   }
@@ -387,7 +388,11 @@ async function autoBattle(chatId) {
   const settings = getSettingsStmt.get(chatId);
   if (!group || !settings) return;
 
-  const lang = detectLang("en", group.language_mode === "auto" ? null : group.language_mode);
+  const fixedLang =
+    group.language_mode && group.language_mode !== "auto"
+      ? group.language_mode
+      : settings.fixed_language || null;
+  const lang = detectLang(null, fixedLang || "ja");
 
   const battleId = uuidv4();
   const duration = [30, 60, 90].includes(settings.battle_duration_sec) ? settings.battle_duration_sec : 30;
