@@ -3,6 +3,7 @@ require("dotenv").config();
 const crypto = require("crypto");
 const express = require("express");
 const cron = require("node-cron");
+const { Pool } = require("pg");
 const Stripe = require("stripe");
 const { v4: uuidv4 } = require("uuid");
 const { Telegraf, Markup } = require("telegraf");
@@ -20,6 +21,7 @@ const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "";
 const STRIPE_SUCCESS_URL = process.env.STRIPE_SUCCESS_URL || "https://t.me";
 const STRIPE_CANCEL_URL = process.env.STRIPE_CANCEL_URL || "https://t.me";
 const PORT = Number(process.env.PORT || 3000);
+const DATABASE_URL = process.env.DATABASE_URL || "";
 const LICENSE_SECRET = process.env.LICENSE_SECRET || "CHANGE_ME";
 const LICENSE_SEEDS = (process.env.PREMIUM_LICENSE_SEEDS || "")
   .split(",")
@@ -32,6 +34,12 @@ if (!BOT_TOKEN) {
 
 const bot = new Telegraf(BOT_TOKEN);
 const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY) : null;
+const pgPool = DATABASE_URL
+  ? new Pool({
+      connectionString: DATABASE_URL,
+      ssl: process.env.PGSSLMODE === "disable" ? false : { rejectUnauthorized: false },
+    })
+  : null;
 const activeBattles = new Map();
 const scheduleRunners = new Map();
 const AUTO_DELETE_MS = 2 * 60 * 1000;
@@ -125,6 +133,39 @@ function ensureGroup(ctx) {
   };
 }
 
+async function initPremiumStore() {
+  if (!pgPool) return;
+  await pgPool.query(`
+    CREATE TABLE IF NOT EXISTS premium_groups (
+      chat_id TEXT PRIMARY KEY,
+      activated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+}
+
+async function markPremiumPersistent(chatId) {
+  if (!pgPool) return;
+  await pgPool.query(
+    `INSERT INTO premium_groups (chat_id, activated_at)
+     VALUES ($1, NOW())
+     ON CONFLICT (chat_id) DO UPDATE SET activated_at = EXCLUDED.activated_at`,
+    [String(chatId)]
+  );
+}
+
+async function isPremiumPersistent(chatId) {
+  if (!pgPool) return false;
+  const r = await pgPool.query("SELECT 1 FROM premium_groups WHERE chat_id=$1 LIMIT 1", [String(chatId)]);
+  return r.rowCount > 0;
+}
+
+async function getPremiumEnabled(chatId, sqliteFlag) {
+  if (sqliteFlag) return true;
+  const persisted = await isPremiumPersistent(chatId);
+  if (persisted) setPremiumStmt.run(nowISO(), String(chatId));
+  return persisted;
+}
+
 async function replyGroupAutoDelete(ctx, text, extra = {}) {
   const sent = await ctx.reply(text, extra);
   if (["group", "supergroup"].includes(ctx.chat?.type)) {
@@ -142,6 +183,7 @@ function activatePremiumForChat(chatId, userId, buyerDmId) {
     upsertDefaultSettingsStmt.run(String(chatId));
     setPremiumStmt.run(now, String(chatId));
   })();
+  markPremiumPersistent(chatId).catch((e) => console.error("Failed to persist premium:", e.message));
   // Privacy-first: do not post payment confirmation in group.
   if (buyerDmId) {
     bot.telegram
@@ -496,6 +538,7 @@ bot.command("license", async (ctx) => {
     if (result.changes !== 1) return ctx.reply(t(lang, "license_ng"));
 
     setPremiumStmt.run(nowISO(), String(ctx.chat.id));
+    await markPremiumPersistent(String(ctx.chat.id));
     return ctx.reply(t(lang, "license_ok"));
   }
 
@@ -531,6 +574,7 @@ bot.command("license", async (ctx) => {
       if (result.changes !== 1) throw new Error("activate_failed");
       setPremiumStmt.run(nowISO(), targetChatId);
     })();
+    await markPremiumPersistent(targetChatId);
 
     return ctx.reply(`Premium Activated for group: ${targetChatId}`);
   }
@@ -732,10 +776,11 @@ bot.command("settings", async (ctx) => {
   const lang = getLang(ctx, group, settings);
   if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
 
+  const isPremium = await getPremiumEnabled(String(ctx.chat.id), !!group.is_premium);
   const schedule = getScheduleByChatStmt.get(String(ctx.chat.id));
   const text = [
     t(lang, "settings_title"),
-    `Premium: ${group.is_premium ? "ON" : "OFF"}`,
+    `Premium: ${isPremium ? "ON" : "OFF"}`,
     `Duration: ${settings.battle_duration_sec}s`,
     `Language: ${group.language_mode}`,
     `GIF: ${settings.gif_enabled ? "ON" : "OFF"}`,
@@ -781,7 +826,7 @@ bot.command("setgif", async (ctx) => {
   const { group, settings } = ensureGroup(ctx);
   const lang = getLang(ctx, group, settings);
   if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
-  if (!group.is_premium) return ctx.reply(t(lang, "premium_only"));
+  if (!(await getPremiumEnabled(String(ctx.chat.id), !!group.is_premium))) return ctx.reply(t(lang, "premium_only"));
   const mode = (ctx.message.text.split(" ")[1] || "").toLowerCase();
   if (!["on", "off"].includes(mode)) return ctx.reply("Use on/off");
   setGifStmt.run(mode === "on" ? 1 : 0, String(ctx.chat.id));
@@ -792,7 +837,7 @@ bot.command("setbutton", async (ctx) => {
   const { group, settings } = ensureGroup(ctx);
   const lang = getLang(ctx, group, settings);
   if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
-  if (!group.is_premium) return ctx.reply(t(lang, "premium_only"));
+  if (!(await getPremiumEnabled(String(ctx.chat.id), !!group.is_premium))) return ctx.reply(t(lang, "premium_only"));
   const value = ctx.message.text.split(" ").slice(1).join(" ").trim();
   if (!value) return ctx.reply("/setbutton <text>");
   setJoinBtnStmt.run(value, String(ctx.chat.id));
@@ -803,7 +848,7 @@ bot.command("setwinner", async (ctx) => {
   const { group, settings } = ensureGroup(ctx);
   const lang = getLang(ctx, group, settings);
   if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
-  if (!group.is_premium) return ctx.reply(t(lang, "premium_only"));
+  if (!(await getPremiumEnabled(String(ctx.chat.id), !!group.is_premium))) return ctx.reply(t(lang, "premium_only"));
   const value = ctx.message.text.split(" ").slice(1).join(" ").trim();
   if (!value || !value.includes("{user}")) return ctx.reply("Need template with {user}");
   setWinnerTplStmt.run(value, String(ctx.chat.id));
@@ -814,7 +859,7 @@ bot.command("seteffect", async (ctx) => {
   const { group, settings } = ensureGroup(ctx);
   const lang = getLang(ctx, group, settings);
   if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
-  if (!group.is_premium) return ctx.reply(t(lang, "premium_only"));
+  if (!(await getPremiumEnabled(String(ctx.chat.id), !!group.is_premium))) return ctx.reply(t(lang, "premium_only"));
 
   const args = ctx.message.text.split(" ").slice(1);
   if (args[0] === "reset") {
@@ -838,7 +883,7 @@ bot.command("schedule", async (ctx) => {
   const { group, settings } = ensureGroup(ctx);
   const lang = getLang(ctx, group, settings);
   if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
-  if (!group.is_premium) return ctx.reply(t(lang, "premium_only"));
+  if (!(await getPremiumEnabled(String(ctx.chat.id), !!group.is_premium))) return ctx.reply(t(lang, "premium_only"));
 
   const parsed = parseScheduleArgs(ctx.message.text.split(" ").slice(1));
   if (!parsed) return ctx.reply(t(lang, "schedule_usage"));
@@ -881,7 +926,7 @@ bot.command("unschedule", async (ctx) => {
   const { group, settings } = ensureGroup(ctx);
   const lang = getLang(ctx, group, settings);
   if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
-  if (!group.is_premium) return ctx.reply(t(lang, "premium_only"));
+  if (!(await getPremiumEnabled(String(ctx.chat.id), !!group.is_premium))) return ctx.reply(t(lang, "premium_only"));
 
   deleteSchedulesByChatStmt.run(String(ctx.chat.id));
   clearScheduleRunner(String(ctx.chat.id));
@@ -897,6 +942,7 @@ seedLicenses();
 loadSchedulesOnBoot();
 startWebhookServer();
 registerTelegramCommands();
+initPremiumStore().catch((e) => console.error("Premium store init failed:", e.message));
 
 bot.launch().then(() => {
   console.log("Telegram Rumble Bot is running.");
