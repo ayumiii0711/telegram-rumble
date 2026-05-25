@@ -242,7 +242,7 @@ function startWebhookServer() {
   });
 }
 
-async function startBattle(ctx, chatId, creatorUserId, lang, settings) {
+async function startBattle(ctx, chatId, creatorUserId, lang, settings, customText = "") {
   if (activeBattles.has(chatId)) {
     return ctx.reply(t(lang, "battle_running"));
   }
@@ -252,8 +252,9 @@ async function startBattle(ctx, chatId, creatorUserId, lang, settings) {
   createBattleStmt.run(battleId, chatId, String(creatorUserId), nowISO());
 
   const joinText = settings.join_button_text || t(lang, "join_button");
+  const extra = customText ? `\n\n${customText}` : "";
   const sent = await ctx.reply(
-    `${t(lang, "battle_started")}\n${t(lang, "countdown", { sec: duration, count: 0 })}`,
+    `${t(lang, "battle_started")}\n${t(lang, "countdown", { sec: duration, count: 0 })}${extra}`,
     Markup.inlineKeyboard([Markup.button.callback(joinText, `battle_join:${battleId}`)])
   );
 
@@ -275,7 +276,7 @@ async function startBattle(ctx, chatId, creatorUserId, lang, settings) {
         chatId,
         state.messageId,
         undefined,
-        `${t(lang, "battle_started")}\n${t(lang, "countdown", { sec: state.remaining, count })}`,
+        `${t(lang, "battle_started")}\n${t(lang, "countdown", { sec: state.remaining, count })}${extra}`,
         { reply_markup: Markup.inlineKeyboard([Markup.button.callback(joinText, `battle_join:${battleId}`)]).reply_markup }
       );
     } catch (_) {}
@@ -503,7 +504,8 @@ bot.command("battle", async (ctx) => {
   const { group, settings } = ensureGroup(ctx);
   const lang = getLang(ctx, group, settings);
   if (!(await isAdmin(ctx))) return ctx.reply(t(lang, "admin_only"));
-  await startBattle(ctx, String(ctx.chat.id), ctx.from.id, lang, settings);
+  const customText = ctx.message.text.split(" ").slice(1).join(" ").trim().slice(0, 500);
+  await startBattle(ctx, String(ctx.chat.id), ctx.from.id, lang, settings, customText);
 });
 
 bot.action(/battle_join:(.+)/, async (ctx) => {
