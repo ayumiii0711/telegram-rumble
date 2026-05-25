@@ -1,7 +1,9 @@
 require("dotenv").config();
 
 const crypto = require("crypto");
+const express = require("express");
 const cron = require("node-cron");
+const Stripe = require("stripe");
 const { v4: uuidv4 } = require("uuid");
 const { Telegraf, Markup } = require("telegraf");
 
@@ -12,6 +14,12 @@ const { nowISO, parseScheduleArgs } = require("./services/utils");
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const STRIPE_PAYMENT_LINK =
   process.env.STRIPE_PAYMENT_LINK || "https://buy.stripe.com/14A9AS2AN7CK6sL7Azawo00";
+const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || "";
+const STRIPE_PRICE_ID = process.env.STRIPE_PRICE_ID || "";
+const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || "";
+const STRIPE_SUCCESS_URL = process.env.STRIPE_SUCCESS_URL || "https://t.me";
+const STRIPE_CANCEL_URL = process.env.STRIPE_CANCEL_URL || "https://t.me";
+const PORT = Number(process.env.PORT || 3000);
 const LICENSE_SECRET = process.env.LICENSE_SECRET || "CHANGE_ME";
 const LICENSE_SEEDS = (process.env.PREMIUM_LICENSE_SEEDS || "")
   .split(",")
@@ -23,6 +31,7 @@ if (!BOT_TOKEN) {
 }
 
 const bot = new Telegraf(BOT_TOKEN);
+const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY) : null;
 const activeBattles = new Map();
 const scheduleRunners = new Map();
 
@@ -70,6 +79,8 @@ SET is_used=1, used_by_chat_id=?, used_by_user_id=?, activated_at=?
 WHERE code=? AND is_used=0
 `);
 const setPremiumStmt = db.prepare("UPDATE groups SET is_premium=1, updated_at=? WHERE chat_id=?");
+const getEventStmt = db.prepare("SELECT event_id FROM stripe_events WHERE event_id=?");
+const addEventStmt = db.prepare("INSERT INTO stripe_events (event_id, event_type, created_at) VALUES (?, ?, ?)");
 
 const deleteSchedulesByChatStmt = db.prepare("DELETE FROM schedules WHERE chat_id=?");
 const insertScheduleStmt = db.prepare(`
@@ -111,6 +122,64 @@ function ensureGroup(ctx) {
     group: getGroupStmt.get(chatId),
     settings: getSettingsStmt.get(chatId),
   };
+}
+
+function activatePremiumForChat(chatId, userId) {
+  const now = nowISO();
+  db.transaction(() => {
+    upsertGroupStmt.run({ chat_id: String(chatId), title: "", now });
+    upsertDefaultSettingsStmt.run(String(chatId));
+    setPremiumStmt.run(now, String(chatId));
+  })();
+  if (userId) {
+    bot.telegram
+      .sendMessage(
+        String(chatId),
+        `✅ Premium auto-activated from Stripe payment.\nActivated by user: ${userId}`
+      )
+      .catch(() => {});
+  }
+}
+
+function startWebhookServer() {
+  const app = express();
+
+  app.get("/health", (_req, res) => {
+    res.status(200).send("ok");
+  });
+
+  app.post("/stripe/webhook", express.raw({ type: "application/json" }), (req, res) => {
+    if (!stripe || !STRIPE_WEBHOOK_SECRET) return res.status(400).send("Stripe webhook disabled");
+
+    let event;
+    try {
+      const sig = req.headers["stripe-signature"];
+      event = stripe.webhooks.constructEvent(req.body, sig, STRIPE_WEBHOOK_SECRET);
+    } catch (err) {
+      console.error("Webhook signature verification failed:", err.message);
+      return res.status(400).send("Bad signature");
+    }
+
+    if (getEventStmt.get(event.id)) return res.status(200).send("already processed");
+
+    try {
+      if (event.type === "checkout.session.completed") {
+        const session = event.data.object;
+        const targetChatId = session.metadata?.chat_id;
+        const buyerUserId = session.metadata?.user_id || "unknown";
+        if (targetChatId) activatePremiumForChat(targetChatId, buyerUserId);
+      }
+      addEventStmt.run(event.id, event.type, nowISO());
+      return res.status(200).send("ok");
+    } catch (err) {
+      console.error("Webhook handling failed:", err);
+      return res.status(500).send("error");
+    }
+  });
+
+  app.listen(PORT, () => {
+    console.log(`Webhook server listening on port ${PORT}`);
+  });
 }
 
 async function startBattle(ctx, chatId, creatorUserId, lang, settings) {
@@ -311,6 +380,35 @@ bot.command("premium", async (ctx) => {
   const { group, settings } = ctx.chat?.type === "private" ? { group: null, settings: null } : ensureGroup(ctx);
   const lang = getLang(ctx, group, settings);
   await ctx.reply(t(lang, "premium_info", { url: STRIPE_PAYMENT_LINK }));
+});
+
+bot.command("buy", async (ctx) => {
+  if (!["group", "supergroup"].includes(ctx.chat?.type)) return ctx.reply("Use in group only.");
+  if (!(await isAdmin(ctx))) return ctx.reply("Admins only.");
+  if (!stripe || !STRIPE_PRICE_ID) {
+    return ctx.reply("Auto-payment is not configured yet. Please set STRIPE_SECRET_KEY and STRIPE_PRICE_ID.");
+  }
+
+  const chatId = String(ctx.chat.id);
+  const userId = String(ctx.from.id);
+  ensureGroup(ctx);
+
+  try {
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      line_items: [{ price: STRIPE_PRICE_ID, quantity: 1 }],
+      success_url: STRIPE_SUCCESS_URL,
+      cancel_url: STRIPE_CANCEL_URL,
+      metadata: {
+        chat_id: chatId,
+        user_id: userId,
+      },
+    });
+    await ctx.reply(`💳 Pay here to auto-activate Premium:\n${session.url}`);
+  } catch (err) {
+    console.error("Failed to create checkout session:", err);
+    await ctx.reply("Failed to create payment session. Please try again later.");
+  }
 });
 
 bot.command("battle", async (ctx) => {
@@ -577,6 +675,7 @@ bot.catch((err, ctx) => {
 
 seedLicenses();
 loadSchedulesOnBoot();
+startWebhookServer();
 
 bot.launch().then(() => {
   console.log("Telegram Rumble Bot is running.");

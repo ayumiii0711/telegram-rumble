@@ -75,6 +75,12 @@ CREATE TABLE IF NOT EXISTS schedules (
 
 CREATE INDEX IF NOT EXISTS idx_schedules_chat_id ON schedules(chat_id);
 CREATE INDEX IF NOT EXISTS idx_battles_chat_id ON battles(chat_id);
+
+CREATE TABLE IF NOT EXISTS stripe_events (
+  event_id TEXT PRIMARY KEY,
+  event_type TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
 `);
 
 module.exports = db;
