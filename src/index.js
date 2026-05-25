@@ -34,6 +34,7 @@ const bot = new Telegraf(BOT_TOKEN);
 const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY) : null;
 const activeBattles = new Map();
 const scheduleRunners = new Map();
+const AUTO_DELETE_MS = 2 * 60 * 1000;
 
 const upsertGroupStmt = db.prepare(`
 INSERT INTO groups (chat_id, title, created_at, updated_at)
@@ -122,6 +123,16 @@ function ensureGroup(ctx) {
     group: getGroupStmt.get(chatId),
     settings: getSettingsStmt.get(chatId),
   };
+}
+
+async function replyGroupAutoDelete(ctx, text, extra = {}) {
+  const sent = await ctx.reply(text, extra);
+  if (["group", "supergroup"].includes(ctx.chat?.type)) {
+    setTimeout(() => {
+      ctx.telegram.deleteMessage(ctx.chat.id, sent.message_id).catch(() => {});
+    }, AUTO_DELETE_MS);
+  }
+  return sent;
 }
 
 function activatePremiumForChat(chatId, userId, buyerDmId) {
@@ -669,7 +680,7 @@ bot.command("helpdm", async (ctx) => {
 bot.command("help", async (ctx) => {
   const lang = detectLang(ctx.from?.language_code, null);
   if (ctx.chat?.type === "private") return ctx.reply(dmGuideText(lang));
-  return ctx.reply(groupHelpText(lang));
+  return replyGroupAutoDelete(ctx, groupHelpText(lang));
 });
 
 bot.start(async (ctx) => {
@@ -741,7 +752,7 @@ bot.command("settings", async (ctx) => {
     "/seteffect add <text with {a} and {b}> (premium)",
     "/seteffect reset (premium)",
   ].join("\n");
-  await ctx.reply(text);
+  await replyGroupAutoDelete(ctx, text);
 });
 
 bot.command("setduration", async (ctx) => {
