@@ -535,7 +535,39 @@ bot.command("groupid", async (ctx) => {
   return ctx.reply(`Group ID: ${ctx.chat.id}`);
 });
 
-function dmGuideText() {
+function dmGuideText(lang) {
+  if (lang === "ja") {
+    return [
+      "📘 Premiumセットアップガイド（DM）",
+      "",
+      "1) 対象グループで /groupid を実行",
+      "2) グループIDをコピー（例: -1001234567890）",
+      "3) このDMで /buy -1001234567890 を実行",
+      "4) 表示されたStripeリンクで決済",
+      "5) Premium有効化が完了するとDMに通知が届きます",
+      "",
+      "注意:",
+      "- 対象グループの管理者である必要があります",
+      "- BOTが対象グループに参加している必要があります",
+      "- 1回の支払いで1グループ分のPremiumが有効化されます",
+    ].join("\n");
+  }
+  if (lang === "zh") {
+    return [
+      "📘 Premium 设置指南（私聊）",
+      "",
+      "1) 在目标群组中执行 /groupid",
+      "2) 复制群组ID（例如: -1001234567890）",
+      "3) 在本私聊执行 /buy -1001234567890",
+      "4) 通过生成的Stripe链接完成支付",
+      "5) Premium激活完成后会收到私聊通知",
+      "",
+      "注意:",
+      "- 你必须是目标群组管理员",
+      "- 机器人必须已加入目标群组",
+      "- 1次支付 = 1个群组Premium激活",
+    ].join("\n");
+  }
   return [
     "📘 Premium Setup Guide (DM)",
     "",
@@ -554,12 +586,20 @@ function dmGuideText() {
 
 bot.command("helpdm", async (ctx) => {
   if (ctx.chat?.type !== "private") return ctx.reply("Use this command in DM.");
-  return ctx.reply(dmGuideText());
+  const lang = detectLang(ctx.from?.language_code, null);
+  return ctx.reply(dmGuideText(lang));
+});
+
+bot.command("help", async (ctx) => {
+  if (ctx.chat?.type !== "private") return;
+  const lang = detectLang(ctx.from?.language_code, null);
+  return ctx.reply(dmGuideText(lang));
 });
 
 bot.start(async (ctx) => {
   if (ctx.chat?.type !== "private") return;
-  return ctx.reply(dmGuideText());
+  const lang = detectLang(ctx.from?.language_code, null);
+  return ctx.reply(dmGuideText(lang));
 });
 
 bot.command("settings", async (ctx) => {
