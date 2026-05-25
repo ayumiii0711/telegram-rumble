@@ -584,6 +584,82 @@ function dmGuideText(lang) {
   ].join("\n");
 }
 
+function groupHelpText(lang) {
+  if (lang === "ja") {
+    return [
+      "📘 Rumble BOT 使い方（グループ）",
+      "",
+      "基本:",
+      "/battle - バトル募集開始（管理者）",
+      "/settings - 現在設定の確認（管理者）",
+      "/setduration 30|60|90 - 募集時間変更",
+      "/setlanguage auto|ja|en|zh - 言語設定",
+      "/groupid - グループID表示（管理者）",
+      "",
+      "Premium:",
+      "/buy - このグループ向け決済リンク発行（管理者）",
+      "/schedule 21:00 - 毎日自動開催",
+      "/unschedule - 自動開催解除",
+      "/setbutton <text> - 参加ボタン文言",
+      "/setwinner <template> - 勝者文言（{user}必須）",
+      "/seteffect add <text> - 演出追加（{a} {b}必須）",
+      "/seteffect reset - 演出リセット",
+      "/setgif on|off - GIF切替",
+      "",
+      "DMサポート:",
+      "/helpdm でDM手順を表示",
+    ].join("\n");
+  }
+  if (lang === "zh") {
+    return [
+      "📘 Rumble BOT 使用指南（群组）",
+      "",
+      "基础功能:",
+      "/battle - 开始招募战斗（管理员）",
+      "/settings - 查看当前设置（管理员）",
+      "/setduration 30|60|90 - 设置招募时间",
+      "/setlanguage auto|ja|en|zh - 语言设置",
+      "/groupid - 显示群组ID（管理员）",
+      "",
+      "Premium 功能:",
+      "/buy - 为本群生成支付链接（管理员）",
+      "/schedule 21:00 - 每天自动开战",
+      "/unschedule - 取消自动开战",
+      "/setbutton <text> - 参加按钮文案",
+      "/setwinner <template> - 胜者文案（需包含{user}）",
+      "/seteffect add <text> - 添加演出（需包含{a}和{b}）",
+      "/seteffect reset - 重置演出",
+      "/setgif on|off - GIF开关",
+      "",
+      "私聊支持:",
+      "/helpdm 查看私聊操作步骤",
+    ].join("\n");
+  }
+  return [
+    "📘 Rumble BOT Guide (Group)",
+    "",
+    "Basic:",
+    "/battle - Start battle recruitment (admin)",
+    "/settings - Show current settings (admin)",
+    "/setduration 30|60|90 - Set recruit time",
+    "/setlanguage auto|ja|en|zh - Language mode",
+    "/groupid - Show group id (admin)",
+    "",
+    "Premium:",
+    "/buy - Create payment link for this group (admin)",
+    "/schedule 21:00 - Daily auto battle",
+    "/unschedule - Remove auto schedule",
+    "/setbutton <text> - Join button text",
+    "/setwinner <template> - Winner text (needs {user})",
+    "/seteffect add <text> - Add effect (needs {a} and {b})",
+    "/seteffect reset - Reset effects",
+    "/setgif on|off - GIF switch",
+    "",
+    "DM support:",
+    "/helpdm to see DM setup steps",
+  ].join("\n");
+}
+
 bot.command("helpdm", async (ctx) => {
   if (ctx.chat?.type !== "private") return ctx.reply("Use this command in DM.");
   const lang = detectLang(ctx.from?.language_code, null);
@@ -591,9 +667,9 @@ bot.command("helpdm", async (ctx) => {
 });
 
 bot.command("help", async (ctx) => {
-  if (ctx.chat?.type !== "private") return;
   const lang = detectLang(ctx.from?.language_code, null);
-  return ctx.reply(dmGuideText(lang));
+  if (ctx.chat?.type === "private") return ctx.reply(dmGuideText(lang));
+  return ctx.reply(groupHelpText(lang));
 });
 
 bot.start(async (ctx) => {
@@ -601,6 +677,43 @@ bot.start(async (ctx) => {
   const lang = detectLang(ctx.from?.language_code, null);
   return ctx.reply(dmGuideText(lang));
 });
+
+async function registerTelegramCommands() {
+  const groupCommands = [
+    { command: "help", description: "How to use this bot" },
+    { command: "battle", description: "Start rumble battle (admin)" },
+    { command: "settings", description: "Show group settings (admin)" },
+    { command: "groupid", description: "Show this group id (admin)" },
+    { command: "buy", description: "Create premium payment link (admin)" },
+    { command: "premium", description: "Show premium info and link" },
+    { command: "schedule", description: "Set auto battle schedule (premium)" },
+    { command: "unschedule", description: "Remove auto schedule (premium)" },
+    { command: "setduration", description: "Set recruit time 30/60/90" },
+    { command: "setlanguage", description: "Set language auto/ja/en/zh" },
+    { command: "setbutton", description: "Set join button text (premium)" },
+    { command: "setwinner", description: "Set winner message (premium)" },
+    { command: "seteffect", description: "Add/reset effects (premium)" },
+    { command: "setgif", description: "Enable/disable GIF (premium)" },
+    { command: "license", description: "Activate premium license" },
+  ];
+
+  const dmCommands = [
+    { command: "start", description: "Start DM guide" },
+    { command: "help", description: "Show DM help" },
+    { command: "helpdm", description: "Show premium setup steps" },
+    { command: "buy", description: "Buy premium for group id" },
+    { command: "premium", description: "Show premium info and link" },
+    { command: "license", description: "Activate premium license" },
+  ];
+
+  try {
+    await bot.telegram.setMyCommands(groupCommands, { scope: { type: "all_group_chats" } });
+    await bot.telegram.setMyCommands(dmCommands, { scope: { type: "all_private_chats" } });
+    console.log("Telegram command menu registered.");
+  } catch (err) {
+    console.error("Failed to register command menu:", err.message);
+  }
+}
 
 bot.command("settings", async (ctx) => {
   if (!["group", "supergroup"].includes(ctx.chat?.type)) return ctx.reply("Use in group only.");
@@ -772,6 +885,7 @@ bot.catch((err, ctx) => {
 seedLicenses();
 loadSchedulesOnBoot();
 startWebhookServer();
+registerTelegramCommands();
 
 bot.launch().then(() => {
   console.log("Telegram Rumble Bot is running.");
