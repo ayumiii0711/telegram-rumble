@@ -11,7 +11,7 @@ const { nowISO, parseScheduleArgs } = require("./services/utils");
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const STRIPE_PAYMENT_LINK =
-  process.env.STRIPE_PAYMENT_LINK || "https://buy.stripe.com/test_aFa7sK2BQ2PH9Gm71P14400";
+  process.env.STRIPE_PAYMENT_LINK || "https://buy.stripe.com/14A9AS2AN7CK6sL7Azawo00";
 const LICENSE_SECRET = process.env.LICENSE_SECRET || "CHANGE_ME";
 const LICENSE_SEEDS = (process.env.PREMIUM_LICENSE_SEEDS || "")
   .split(",")

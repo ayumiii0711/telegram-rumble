@@ -68,7 +68,7 @@ telegram-rumble-bot/
 このBOTは Stripe Payment Link 経由のPremium販売を想定しています。
 
 現在の決済URL（初期値）:
-- [Stripe Payment Link](https://buy.stripe.com/test_aFa7sK2BQ2PH9Gm71P14400)
+- [Stripe Payment Link](https://buy.stripe.com/14A9AS2AN7CK6sL7Azawo00)
 
 ユーザー導線:
 1. `/premium` で購入リンク表示
@@ -85,7 +85,7 @@ telegram-rumble-bot/
 ```bash
 BOT_TOKEN=YOUR_TELEGRAM_BOT_TOKEN
 DATABASE_PATH=./data/rumble.db
-STRIPE_PAYMENT_LINK=https://buy.stripe.com/test_aFa7sK2BQ2PH9Gm71P14400
+STRIPE_PAYMENT_LINK=https://buy.stripe.com/14A9AS2AN7CK6sL7Azawo00
 LICENSE_SECRET=CHANGE_ME_TO_LONG_RANDOM_STRING
 PREMIUM_LICENSE_SEEDS=ALPHA-STARTER-2026,WEB3-RUMBLE-9999
 DEFAULT_TIMEZONE=Asia/Tokyo
