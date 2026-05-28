@@ -2,6 +2,8 @@ require("dotenv").config();
 
 const crypto = require("crypto");
 const express = require("express");
+const fs = require("fs");
+const path = require("path");
 const cron = require("node-cron");
 const { Pool } = require("pg");
 const Stripe = require("stripe");
@@ -24,6 +26,9 @@ const PORT = Number(process.env.PORT || 3000);
 const DATABASE_URL = process.env.DATABASE_URL || "";
 const BOT_OWNER_ID = String(process.env.BOT_OWNER_ID || "");
 const DEFAULT_TIMEZONE = process.env.DEFAULT_TIMEZONE || "Asia/Tokyo";
+const BATTLE_START_IMAGE_URL = process.env.BATTLE_START_IMAGE_URL || "";
+const BATTLE_START_IMAGE_PATH = process.env.BATTLE_START_IMAGE_PATH || "./assets/battle_start.jpg";
+const BATTLE_COMMENT_INTERVAL_MS = Number(process.env.BATTLE_COMMENT_INTERVAL_MS || 5000);
 const LICENSE_SECRET = process.env.LICENSE_SECRET || "CHANGE_ME";
 const LICENSE_SEEDS = (process.env.PREMIUM_LICENSE_SEEDS || "")
   .split(",")
@@ -182,6 +187,23 @@ async function replyGroupAutoDelete(ctx, text, extra = {}) {
   return sent;
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function sendBattleStartImage(telegram, chatId) {
+  try {
+    if (BATTLE_START_IMAGE_URL) {
+      await telegram.sendPhoto(chatId, BATTLE_START_IMAGE_URL);
+      return;
+    }
+    const localPath = path.resolve(BATTLE_START_IMAGE_PATH);
+    if (fs.existsSync(localPath)) {
+      await telegram.sendPhoto(chatId, { source: localPath });
+    }
+  } catch (_) {}
+}
+
 function activatePremiumForChat(chatId, userId, buyerDmId) {
   const now = nowISO();
   db.transaction(() => {
@@ -316,6 +338,8 @@ async function finishBattle(telegram, state, lang, settings) {
     state.chatId,
     `👥 Participants (${names.length})\n${participantList}\n\n🎬 Battle Start!`
   );
+  await sleep(5000);
+  await sendBattleStartImage(telegram, state.chatId);
 
   const defaultEffects = getEffects(lang);
   let effects = defaultEffects;
@@ -334,6 +358,7 @@ async function finishBattle(telegram, state, lang, settings) {
     const attacker = candidates[Math.floor(Math.random() * candidates.length)];
     const effect = effects[Math.floor(Math.random() * effects.length)];
     await telegram.sendMessage(state.chatId, effect.replaceAll("{a}", attacker.name).replaceAll("{b}", loser.name));
+    await sleep(BATTLE_COMMENT_INTERVAL_MS);
     alive.splice(loserIdx, 1);
   }
 
